@@ -16,6 +16,7 @@ from bot.handlers.channel_parser import parser_router
 from scanner.profile_checker import profile_checker
 from scanner.ton_scanner import ton_scanner
 from scanner.see_scanner import see_scanner
+from scanner.telegram_resale_scanner import telegram_resale_scanner
 from scanner.base_loader import base_manager
 from scanner.dispatcher import topic_dispatcher
 
@@ -92,8 +93,12 @@ async def main():
     async def ton_scanner_wrapper():
         await ton_scanner.run_loop(lambda lot: on_new_lot_detected(lot, bot))
 
+    async def telegram_resale_wrapper():
+        await telegram_resale_scanner.run_loop(lambda lot: on_new_lot_detected(lot, bot))
+
     asyncio.create_task(see_scanner_wrapper())
     asyncio.create_task(ton_scanner_wrapper())
+    asyncio.create_task(telegram_resale_wrapper())
     asyncio.create_task(topic_dispatcher.start(bot))
 
     logger.info("Бот запущен и ожидает событий. Нажмите Ctrl+C для остановки.")
@@ -103,6 +108,7 @@ async def main():
         topic_dispatcher.stop()
         see_scanner.stop()
         ton_scanner.stop()
+        telegram_resale_scanner.stop()
         base_manager.is_processing = False
         await profile_checker.close()
         await bot.session.close()

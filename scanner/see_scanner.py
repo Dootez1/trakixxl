@@ -60,8 +60,9 @@ class SeeScanner:
                 return
 
             gift = event_data.get("gift") or {}
-            slug = gift.get("slug")
-            num = gift.get("num")
+            details = gift.get("details") or {}
+            slug = gift.get("slug") or details.get("slug")
+            num = gift.get("num") if gift.get("num") is not None else details.get("num")
             if not slug or num is None:
                 return
 
@@ -89,13 +90,18 @@ class SeeScanner:
                 price_gram = round(float(event_data["price_ton"]), 2)
 
             if price_gram <= 0:
-                raw_ton = gift.get("resellAmountTon")
-                if raw_ton and str(raw_ton).isdigit():
+                raw_ton = gift.get("resellAmountTon") or details.get("resellAmountTon")
+                if raw_ton and str(raw_ton).isdigit() and int(raw_ton) > 0:
                     price_gram = round(int(raw_ton) / 1e9, 2)
+
+            if price_gram <= 0:
+                raw_stars = gift.get("resellAmountStars") or details.get("resellAmountStars")
+                if raw_stars and str(raw_stars).isdigit() and int(raw_stars) > 0:
+                    price_gram = round(int(raw_stars) / 72.0, 2)
 
             # Если цена не указана (например, при transfer / new), берем примерную оценку или минимальную
             if price_gram <= 0:
-                estimate = gift.get("estimate") or {}
+                estimate = gift.get("estimate") or details.get("estimate") or {}
                 if isinstance(estimate, dict) and estimate.get("ton"):
                     price_gram = round(float(estimate["ton"]), 2)
                 else:
@@ -107,13 +113,17 @@ class SeeScanner:
 
             # 3. Атрибуты подарка
             market = event_data.get("market") or "telegram"
-            title = gift.get("title") or slug
+            title = gift.get("title") or details.get("title") or slug
             full_name = f"{title} #{num}"
 
-            model_name = self._extract_attr_name(gift.get("model"), "Original")
-            backdrop_name = self._extract_attr_name(gift.get("backdrop"), "Persimmon")
-            pattern_name = self._extract_attr_name(gift.get("pattern"), "Classic")
-            is_crafted = bool(gift.get("crafted", False)) or (ev_type == "new")
+            model_val = gift.get("model") or details.get("model")
+            backdrop_val = gift.get("backdrop") or details.get("backdrop")
+            pattern_val = gift.get("pattern") or details.get("pattern")
+
+            model_name = self._extract_attr_name(model_val, "Original")
+            backdrop_name = self._extract_attr_name(backdrop_val, "Persimmon")
+            pattern_name = self._extract_attr_name(pattern_val, "Classic")
+            is_crafted = bool(gift.get("crafted", False)) or bool(details.get("crafted", False)) or (ev_type == "new")
 
             # 4. Извлечение реального владельца / продавца
             target_username = None
@@ -158,7 +168,7 @@ class SeeScanner:
                 # Запускаем де-анонимизацию через обновленный каскад с защитой от китов
                 if mtproto_gift:
                     try:
-                        deanonym_res = await deanonymize_lot(None, mtproto_gift)
+                        deanonym_res = await deanonymize_lot(None, mtproto_gift, users_map=getattr(res, 'users', None))
                         if deanonym_res is None:
                             await db.mark_slugs_seen([full_slug])
                             return

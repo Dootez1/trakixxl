@@ -19,7 +19,9 @@ logger = logging.getLogger("Deanonymizer")
 BLACKLISTED_HANDLES = {
     "alexander", "terminator", "telegram", "market", "fragment",
     "wallet", "username", "admin", "channel", "news", "support",
-    "gifts", "nft", "ton", "crypto", "official", "bot"
+    "gifts", "nft", "ton", "crypto", "official", "bot", "portals", "portal",
+    "unlimited", "gifthunter", "giftplayers", "gift_bot", "stars", "getgems",
+    "tonnel", "mrkt", "tonviewer"
 }
 
 COMMON_FIRST_NAMES = {
@@ -53,12 +55,16 @@ async def verify_candidate_showcase(
         return False, 999, None
 
     clean_key = str(peer_id).strip().lstrip("@").lower()
+    if clean_key in BLACKLISTED_HANDLES or clean_key in COMMON_FIRST_NAMES or clean_key.endswith("bot"):
+        return False, 999, None
+
     now = time.time()
     if clean_key in _showcase_cache:
         ts, cached_count = _showcase_cache[clean_key]
         if now - ts < 43200:  # 12 часов кэш китов
             if cached_count > 5:
                 return False, cached_count, None
+            return True, cached_count, None
 
     async def _fetch_gifts(c: TelegramClient):
         return await c(GetSavedStarGiftsRequest(
@@ -87,10 +93,10 @@ async def verify_candidate_showcase(
 
         # Строгий фильтр: максимум 5 подарков на аккаунте
         if count > 5:
-            logger.info(f"🚫 [КИТ ОТСЕЯН]: Кандидат {peer_id} имеет {count} подарков (> 5)!")
+            logger.info(f"🚫 [КИТ ОТСЕЯН]: Кандидат @{clean_key} имеет {count} подарков (> 5)!")
             return False, count, None
 
-        # Проверяем реальное наличие лота в витрине
+        # Проверяем витрину (если лот еще не передан на эскроу маркета)
         for item in getattr(res, 'gifts', []):
             g = getattr(item, 'gift', None)
             if not isinstance(g, StarGiftUnique):
@@ -100,7 +106,8 @@ async def verify_candidate_showcase(
             if target_num is not None and target_num > 0 and getattr(g, 'num', None) == target_num:
                 return True, count, None
 
-        return False, count, None
+        # Обычный пользователь (<= 5 подарков), лот выставлен на продажу на маркете
+        return True, count, None
 
     except FloodWaitError as fwe:
         if client:

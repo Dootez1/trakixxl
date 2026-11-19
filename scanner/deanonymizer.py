@@ -32,27 +32,43 @@ COMMON_FIRST_NAMES = {
 }
 
 async def verify_candidate_showcase(
-    client: TelegramClient,
     peer_id: Any,
     target_slug: str,
     target_num: Optional[int] = None,
-    is_on_resale: bool = True
+    client: Optional[TelegramClient] = None
 ) -> Tuple[bool, int, Optional[str]]:
     """
     Строгая верификация кандидата:
     1. Запрашивает витрину пользователя со всеми подарками (exclude_unsaved=False).
     2. Проверяет общее количество подарков: СТРОГО НЕ БОЛЕЕ 5 (исключаем китов).
     3. Если > 5 подарков — СТРОГИЙ СТОП!
+    4. Проверяет реальное наличие лота у кандидата.
     """
-    if not client or not peer_id:
+    if not peer_id:
         return False, 999, None
-    try:
-        res = await client(GetSavedStarGiftsRequest(
+
+    async def _fetch_gifts(c: TelegramClient):
+        return await c(GetSavedStarGiftsRequest(
             peer=peer_id,
             offset='',
             limit=10,
             exclude_unsaved=False
         ))
+
+    try:
+        res = None
+        if client:
+            try:
+                res = await _fetch_gifts(client)
+            except FloodWaitError as fwe:
+                session_pool.report_floodwait(client, fwe.seconds)
+                res = await session_pool.execute_with_retry(_fetch_gifts)
+        else:
+            res = await session_pool.execute_with_retry(_fetch_gifts)
+
+        if not res:
+            return False, 999, None
+
         count = getattr(res, 'count', 0)
 
         # Строгий фильтр: максимум 5 подарков на аккаунте
@@ -60,7 +76,7 @@ async def verify_candidate_showcase(
             logger.info(f"🚫 [КИТ ОТСЕЯН]: Кандидат {peer_id} имеет {count} подарков (> 5)!")
             return False, count, None
 
-        # Проверяем наличие лота в витрине
+        # Проверяем реальное наличие лота в витрине
         for item in getattr(res, 'gifts', []):
             g = getattr(item, 'gift', None)
             if not isinstance(g, StarGiftUnique):
@@ -70,18 +86,18 @@ async def verify_candidate_showcase(
             if target_num is not None and target_num > 0 and getattr(g, 'num', None) == target_num:
                 return True, count, None
 
-        if is_on_resale:
-            return True, count, None
+        return False, count, None
 
     except FloodWaitError as fwe:
-        session_pool.report_floodwait(client, fwe.seconds)
+        if client:
+            session_pool.report_floodwait(client, fwe.seconds)
         return False, 999, None
     except Exception as e:
         logger.debug(f"Верификация витрины не удалась для {peer_id}: {e}")
-    return False, 999, None
+        return False, 999, None
 
 async def deanonymize_lot(
-    client: TelegramClient,
+    client: Optional[TelegramClient],
     gift_obj: StarGiftUnique,
     users_map: Optional[List[User]] = None
 ) -> Optional[Tuple[int, Optional[str], str, int]]:
@@ -118,7 +134,7 @@ async def deanonymize_lot(
 
     for handle in possible_handles:
         try:
-            is_valid, cnt, _ = await verify_candidate_showcase(client, handle, slug, num, is_on_resale=True)
+            is_valid, cnt, _ = await verify_candidate_showcase(handle, slug, num, client=client)
             if cnt > 5:
                 logger.info(f"🚫 [КИТ ОТСЕЯН]: Продавец @{handle} имеет {cnt} подарков (> 5)!")
                 return None  # СТРОГИЙ СТОП: более 5 подарков, запрещено слать!
@@ -139,7 +155,7 @@ async def deanonymize_lot(
             u_first = (u.first_name or "").strip().lower()
             u_user = (u.username or "").strip().lower()
             if clean_name and (u_first == clean_name.lower() or u_user == clean_name.lower()):
-                is_valid, cnt, _ = await verify_candidate_showcase(client, u.id, slug, num, is_on_resale=True)
+                is_valid, cnt, _ = await verify_candidate_showcase(u.id, slug, num, client=client)
                 if not is_valid or cnt > 5:
                     logger.info(f"🚫 [КИТ ОТСЕЯН]: Кандидат {u.username or u.id} имеет {cnt} подарков (> 5)!")
                     return None
@@ -155,7 +171,7 @@ async def deanonymize_lot(
             for cand in candidates:
                 cand_id = cand["tg_id"]
                 cand_user = cand.get("username")
-                is_valid, cnt, _ = await verify_candidate_showcase(client, cand_id, slug, num, is_on_resale=True)
+                is_valid, cnt, _ = await verify_candidate_showcase(cand_id, slug, num, client=client)
                 if not is_valid or cnt > 5:
                     logger.info(f"🚫 [КИТ ОТСЕЯН]: Кандидат из кэша {cand_user or cand_id} имеет {cnt} подарков (> 5)!")
                     return None
@@ -170,7 +186,7 @@ async def deanonymize_lot(
         if reg_entry and reg_entry.get("owner_id"):
             cand_id = reg_entry["owner_id"]
             cand_user = reg_entry.get("owner_username")
-            is_valid, cnt, _ = await verify_candidate_showcase(client, cand_id, slug, num, is_on_resale=True)
+            is_valid, cnt, _ = await verify_candidate_showcase(cand_id, slug, num, client=client)
             if not is_valid or cnt > 5:
                 return None
             if cand_user:
@@ -182,11 +198,11 @@ async def deanonymize_lot(
     owner_id_obj = getattr(gift_obj, 'owner_id', None)
     if isinstance(owner_id_obj, PeerUser) and owner_id_obj.user_id > 0:
         cand_id = owner_id_obj.user_id
-        is_valid, cnt, _ = await verify_candidate_showcase(client, cand_id, slug, num, is_on_resale=True)
+        is_valid, cnt, _ = await verify_candidate_showcase(cand_id, slug, num, client=client)
         if not is_valid or cnt > 5:
             return None
         try:
-            ent = await client.get_entity(cand_id)
+            ent = await session_pool.execute_with_retry(lambda c: c.get_entity(cand_id))
             if isinstance(ent, User) and ent.username:
                 return (cand_id, ent.username, "Direct Peer", cnt)
         except Exception:
@@ -201,10 +217,10 @@ async def deanonymize_lot(
                 for orig_id in [getattr(attr, 'recipient_id', None), getattr(attr, 'sender_id', None)]:
                     if isinstance(orig_id, PeerUser) and orig_id.user_id > 0:
                         cand_id = orig_id.user_id
-                        is_valid, cnt, _ = await verify_candidate_showcase(client, cand_id, slug, num, is_on_resale=True)
+                        is_valid, cnt, _ = await verify_candidate_showcase(cand_id, slug, num, client=client)
                         if is_valid and cnt <= 5:
                             try:
-                                ent = await client.get_entity(cand_id)
+                                ent = await session_pool.execute_with_retry(lambda c: c.get_entity(cand_id))
                                 if isinstance(ent, User) and ent.username:
                                     logger.info(f"🎯 [Original Details]: Подтвержден @{ent.username} (ID {cand_id})")
                                     return (cand_id, ent.username, "Original Details", cnt)

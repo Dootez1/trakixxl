@@ -18,7 +18,7 @@ def get_claimed_group_keyboard(lot_id: int, username: str = None, user_id: int =
     Кнопка 'Занято' с красным фоном (style='danger')
     """
     buttons = [
-        [InlineKeyboardButton(text="Занято", callback_data=f"claimed_info_{lot_id}", style="danger")]
+        [InlineKeyboardButton(text="Занято", callback_data=f"claimed_info_{lot_id}")]
     ]
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 

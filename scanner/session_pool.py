@@ -126,13 +126,16 @@ class SessionPool:
         self.is_initialized = len(self.clients) > 0
         self._last_refresh = time.time()
 
-    def get_client(self) -> Optional[TelegramClient]:
-        """Возвращает следующий доступный клиент не в кулдауне (Round-Robin)."""
+    def get_client(self, exclude_clients: Optional[Set[TelegramClient]] = None) -> Optional[TelegramClient]:
+        """
+        Возвращает следующий доступный клиент не в кулдауне (Round-Robin).
+        Если exclude_clients указан, пропускает эти клиенты (для ротации при ошибке).
+        """
         if not self.clients:
             return None
 
-        # Раз в 15 секунд запускаем фоновую проверку новых сессий
-        if time.time() - self._last_refresh > 15:
+        # Раз в 30 секунд запускаем фоновую проверку новых сессий
+        if time.time() - self._last_refresh > 30:
             self._last_refresh = time.time()
             try:
                 asyncio.create_task(self.refresh_pool())
@@ -141,27 +144,63 @@ class SessionPool:
 
         now = time.time()
         num_clients = len(self.clients)
+        excluded = exclude_clients or set()
 
+        # 1. Ищем свободный клиент не в кулдауне и не исключенный
         for _ in range(num_clients):
             idx = self._current_index % num_clients
             self._current_index += 1
 
+            client = self.clients[idx]
+            if client in excluded:
+                continue
+
             cool_until = self.cooldowns.get(idx, 0)
             if now >= cool_until:
-                return self.clients[idx]
+                return client
 
-        min_idx = min(self.cooldowns, key=self.cooldowns.get) if self.cooldowns else 0
-        return self.clients[min_idx]
+        # 2. Если все доступные клиенты в кулдауне, возвращаем None
+        return None
 
     def report_floodwait(self, client: TelegramClient, seconds: int):
         """Регистрирует кулдаун для клиента, поймавшего FloodWait."""
         try:
             idx = self.clients.index(client)
-            effective_seconds = min(seconds, 30)
+            effective_seconds = max(int(seconds) + 2, 5)
             self.cooldowns[idx] = time.time() + effective_seconds
             logger.warning(f"⏳ Сессия #{idx + 1} в кулдауне на {effective_seconds} сек. Переключение на другую сессию!")
         except ValueError:
             pass
+
+    async def execute_with_retry(self, operation: Callable[[TelegramClient], Any], max_retries: int = 4) -> Any:
+        """
+        Выполняет MTProto операцию с автоматическим переключением сессий при FloodWait.
+        Пробует до max_retries разных сессий из пула без потери лота.
+        """
+        failed_clients: Set[TelegramClient] = set()
+        total = len(self.clients)
+        retries = min(max_retries, total) if total > 0 else 1
+
+        for _ in range(retries):
+            client = self.get_client(exclude_clients=failed_clients)
+            if not client:
+                break
+
+            try:
+                if not client.is_connected():
+                    await client.connect()
+                return await operation(client)
+            except FloodWaitError as fwe:
+                self.report_floodwait(client, fwe.seconds)
+                failed_clients.add(client)
+            except Exception as e:
+                err_str = str(e).lower()
+                if "flood" in err_str:
+                    self.report_floodwait(client, 30)
+                    failed_clients.add(client)
+                else:
+                    raise e
+        return None
 
     async def close(self):
         """Отключает все клиенты пула."""

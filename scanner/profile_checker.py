@@ -134,25 +134,23 @@ class ProfileChecker:
             from telethon.tl.functions.payments import GetSavedStarGiftsRequest
             from telethon.errors import FloodWaitError
 
-            client = self.client
-            if not client:
-                result["skip_reason"] = "Нет доступного клиента в пуле"
-                return result
-
             if entity is None:
-                try:
+                async def _get_ent(c):
                     if isinstance(username_or_id, int) or (isinstance(username_or_id, str) and str(username_or_id).isdigit()):
-                        entity = await client.get_entity(int(username_or_id))
+                        return await c.get_entity(int(username_or_id))
                     else:
-                        entity = await client.get_entity(clean_user)
-                except FloodWaitError as fwe:
-                    session_pool.report_floodwait(client, fwe.seconds)
-                    result["skip_reason"] = "FloodWait на проверке профиля"
-                    result["is_rich"] = True  # Не пропускаем вслепую при FloodWait!
-                    result["gifts_count"] = 999
-                    return result
+                        return await c.get_entity(clean_user)
+
+                try:
+                    entity = await session_pool.execute_with_retry(_get_ent)
                 except Exception as e_ent:
                     result["skip_reason"] = f"Профиль @{clean_user} не найден: {e_ent}"
+                    result["is_rich"] = True
+                    result["gifts_count"] = 999
+                    return result
+
+                if not entity:
+                    result["skip_reason"] = "Сессии пула временно в кулдауне"
                     result["is_rich"] = True
                     result["gifts_count"] = 999
                     return result
@@ -185,28 +183,33 @@ class ProfileChecker:
                 result["restriction_reason"] = "Только с Premium"
 
             # 4. РЕАЛЬНЫЕ ПОДАРКИ (exclude_unsaved=False считает ВСЕ подарки на аккаунте)
-            try:
-                saved_gifts = await client(GetSavedStarGiftsRequest(
+            async def _get_gifts(c):
+                return await c(GetSavedStarGiftsRequest(
                     peer=entity,
                     offset="",
                     limit=10,
                     exclude_unsaved=False
                 ))
-                visible_count = getattr(saved_gifts, 'count', 0)
-                result["gifts_count"] = visible_count
-                result["real_gifts"] = getattr(saved_gifts, 'gifts', [])
 
-                # СТРОГИЙ ФИЛЬТР: Не более 5 подарков в профиле!
-                if visible_count > 5:
+            try:
+                saved_gifts = await session_pool.execute_with_retry(_get_gifts)
+                if saved_gifts:
+                    visible_count = getattr(saved_gifts, 'count', 0)
+                    result["gifts_count"] = visible_count
+                    result["real_gifts"] = getattr(saved_gifts, 'gifts', [])
+
+                    # СТРОГИЙ ФИЛЬТР: Не более 5 подарков в профиле!
+                    if visible_count > 5:
+                        result["is_rich"] = True
+                        result["skip_reason"] = f"Слишком богатый: {visible_count} подарков (максимум 5)"
+                        self._cache[cache_key] = (now, dict(result))
+                        return result
+                else:
+                    # Все сессии в кулдауне
                     result["is_rich"] = True
-                    result["skip_reason"] = f"Слишком богатый: {visible_count} подарков (максимум 5)"
-                    self._cache[cache_key] = (now, dict(result))
+                    result["gifts_count"] = 999
+                    result["skip_reason"] = "Пул сессий временно в кулдауне"
                     return result
-            except FloodWaitError as fwe:
-                session_pool.report_floodwait(client, fwe.seconds)
-                result["is_rich"] = True
-                result["gifts_count"] = 999
-                return result
             except Exception as e_gifts:
                 logger.debug(f"Ошибка получения подарков @{clean_user}: {e_gifts}")
                 result["is_rich"] = True

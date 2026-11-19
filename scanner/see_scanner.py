@@ -32,6 +32,7 @@ class SeeScanner:
         self.seen_slugs = set()
         self.recent_sellers = {}
         self.session: Optional[aiohttp.ClientSession] = None
+        self._semaphore = asyncio.Semaphore(3)
 
     async def init(self):
         self.seen_slugs = await db.get_all_seen_slugs()
@@ -69,6 +70,7 @@ class SeeScanner:
             # 1. 100% Защита от дублей
             if full_slug in self.seen_slugs or await db.is_slug_seen(full_slug):
                 return
+            self.seen_slugs.add(full_slug)
 
             # 2. Расчет цены в TON (GRAM)
             price_info = event_data.get("price") or {}
@@ -114,7 +116,6 @@ class SeeScanner:
             is_crafted = bool(gift.get("crafted", False)) or (ev_type == "new")
 
             # 4. Извлечение реального владельца / продавца
-            client = profile_checker.client
             target_username = None
             target_tg_id = None
             raw_owner_name = gift.get("owner_name") or ""
@@ -123,11 +124,15 @@ class SeeScanner:
             can_write_free = 1
             prem_level = 0
 
-            # Пытаемся получить и де-анонимизировать через MTProto Telegram
-            mtproto_gift = None
-            if client and await client.is_user_authorized():
+            # Ограничиваем параллельные запросы к MTProto
+            async with self._semaphore:
+                # Пытаемся получить и де-анонимизировать через MTProto Telegram
+                mtproto_gift = None
                 try:
-                    res = await client(GetUniqueStarGiftRequest(slug=full_slug))
+                    from scanner.session_pool import session_pool
+                    res = await session_pool.execute_with_retry(
+                        lambda c: c(GetUniqueStarGiftRequest(slug=full_slug))
+                    )
                     if res and getattr(res, 'gift', None):
                         mtproto_gift = res.gift
                         if getattr(mtproto_gift, 'owner_name', None):
@@ -150,28 +155,24 @@ class SeeScanner:
                 except Exception as me:
                     logger.debug(f"MTProto GetUniqueStarGiftRequest({full_slug}): {me}")
 
-            # Запускаем де-анонимизацию через обновленный каскад с защитой от китов
-            if client and mtproto_gift:
-                try:
-                    deanonym_res = await deanonymize_lot(client, mtproto_gift)
-                    if deanonym_res is None:
-                        # Либо кит (> 5 подарков), либо владелец не найден
-                        self.seen_slugs.add(full_slug)
-                        await db.mark_slugs_seen([full_slug])
-                        return
+                # Запускаем де-анонимизацию через обновленный каскад с защитой от китов
+                if mtproto_gift:
+                    try:
+                        deanonym_res = await deanonymize_lot(None, mtproto_gift)
+                        if deanonym_res is None:
+                            await db.mark_slugs_seen([full_slug])
+                            return
 
-                    cand_id, cand_user, method, cnt = deanonym_res
-                    if cnt > 5:
-                        # Кит отсеян
-                        self.seen_slugs.add(full_slug)
-                        await db.mark_slugs_seen([full_slug])
-                        return
+                        cand_id, cand_user, method, cnt = deanonym_res
+                        if cnt > 5:
+                            await db.mark_slugs_seen([full_slug])
+                            return
 
-                    target_tg_id = cand_id
-                    target_username = cand_user
-                    user_gifts_count = cnt
-                except Exception as de:
-                    logger.debug(f"Ошибка де-анонимизации: {de}")
+                        target_tg_id = cand_id
+                        target_username = cand_user
+                        user_gifts_count = cnt
+                    except Exception as de:
+                        logger.debug(f"Ошибка де-анонимизации: {de}")
 
             # Если событие трансфера/получения (авторизованный поток see.tg)
             if not target_username:
@@ -183,14 +184,14 @@ class SeeScanner:
             # ВТОРОЙ ЭШЕЛОН ПРОВЕРКИ КИТОВ: ProfileChecker
             if target_username:
                 p_data = await profile_checker.check_user(target_username)
-                if p_data.get("is_rich") or p_data.get("gifts_count", 0) > 5:
-                    logger.info(f"🚫 [КИТ ОТСЕЯН]: @{target_username} имеет {p_data.get('gifts_count')} подарков (> 5)!")
-                    self.seen_slugs.add(full_slug)
+                g_cnt = p_data.get("gifts_count", user_gifts_count)
+                if p_data.get("is_rich") or g_cnt > 5:
+                    logger.info(f"🚫 [КИТ ОТСЕЯН]: @{target_username} имеет {g_cnt} подарков (> 5) / {p_data.get('skip_reason')}!")
                     await db.mark_slugs_seen([full_slug])
                     return
                 prem_level = p_data.get("premium_level", 0)
                 can_write_free = 1 if p_data.get("can_write_free", True) else 0
-                user_gifts_count = p_data.get("gifts_count", user_gifts_count)
+                user_gifts_count = g_cnt
                 is_fem = p_data.get("is_female", False)
 
             # СТРОГИЙ ФИЛЬТР: В топики отправляются ТОЛЬКО лоты с доступным @username!
@@ -208,10 +209,10 @@ class SeeScanner:
 
             logger.info(f"🔥 [ПОДТВЕРЖДЕН ПРОДАВЕЦ]: {full_name} -> @{target_username} (подарков: {user_gifts_count})")
 
-            # Защита от спама одним и тем же пользователем (строгий суточный кулдаун 24 часа)
+            # Защита от спама одним и тем же пользователем (кулдаун 10 минут)
             seller_key = target_username.lower()
-            if time.time() - self.recent_sellers.get(seller_key, 0) < 86400:
-                logger.debug(f"Продавец @{target_username} уже публиковался за последние 24 часа. Пропускаем.")
+            if time.time() - self.recent_sellers.get(seller_key, 0) < 600:
+                logger.debug(f"Продавец @{target_username} уже публиковался за последние 10 минут. Пропускаем.")
                 return
             self.recent_sellers[seller_key] = time.time()
 

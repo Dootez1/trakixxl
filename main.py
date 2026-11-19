@@ -69,7 +69,11 @@ async def main():
     async def see_scanner_wrapper():
         await see_scanner.run_loop(lambda lot: on_new_lot_detected(lot, bot))
 
+    async def ton_scanner_wrapper():
+        await ton_scanner.run_loop(lambda lot: on_new_lot_detected(lot, bot))
+
     asyncio.create_task(see_scanner_wrapper())
+    asyncio.create_task(ton_scanner_wrapper())
     asyncio.create_task(topic_dispatcher.start(bot))
 
     logger.info("Бот запущен и ожидает событий. Нажмите Ctrl+C для остановки.")

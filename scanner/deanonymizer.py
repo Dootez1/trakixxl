@@ -156,13 +156,11 @@ async def deanonymize_lot(
     for handle in possible_handles:
         try:
             is_valid, cnt, _ = await verify_candidate_showcase(handle, slug, num, client=client)
-            if cnt > 5:
-                logger.info(f"🚫 [КИТ ОТСЕЯН]: Продавец @{handle} имеет {cnt} подарков (> 5)!")
+            if not is_valid or cnt > 5:
                 return None  # СТРОГИЙ СТОП: более 5 подарков, запрещено слать!
 
-            if is_valid:
-                logger.info(f"🎯 [Продавец подтвержден]: @{handle} (подарков: {cnt})")
-                return (None, handle, "Owner Username Match", cnt)
+            logger.info(f"🎯 [Продавец подтвержден]: @{handle} (подарков: {cnt})")
+            return (None, handle, "Owner Username Match", cnt)
         except Exception as e:
             logger.debug(f"Проверка @{handle}: {e}")
 

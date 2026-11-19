@@ -32,7 +32,7 @@ class SeeScanner:
         self.seen_slugs = set()
         self.recent_sellers = {}
         self.session: Optional[aiohttp.ClientSession] = None
-        self._semaphore = asyncio.Semaphore(3)
+        self._semaphore = asyncio.Semaphore(6)
 
     async def init(self):
         self.seen_slugs = await db.get_all_seen_slugs()
@@ -324,7 +324,7 @@ class SeeScanner:
                                     msg_type = data.get("type")
 
                                     if msg_type == "hello":
-                                        events_list = ["new", "transfer", "saved_new", "listing", "price", "sale"] if token else ["listing", "price", "sale"]
+                                        events_list = ["new", "transfer", "saved_new", "listing", "price", "sale"]
                                         sub_payload = {
                                             "type": "subscribe",
                                             "events": events_list

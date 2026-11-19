@@ -109,10 +109,10 @@ class TonScanner:
                 peer=sender,
                 offset='',
                 limit=15,
-                exclude_unsaved=True
+                exclude_unsaved=False
             ))
 
-            if not res or res.count == 0 or res.count > 3:
+            if not res or res.count == 0 or res.count > 5:
                 return
 
             profile_data = await profile_checker.check_user(sender)

@@ -272,13 +272,14 @@ class TelegramResaleScanner:
             cycle_idx += 1
 
             try:
-                # Запрашиваем топ самых дешёвых листингов по коллекции подарка
+                # Чередуем: один цикл самые дешёвые листинги, второй — самые свежие новинки
+                is_sort_price = (cycle_idx % 2 == 0)
                 resale = await session_pool.execute_with_retry(
                     lambda c: c(GetResaleStarGiftsRequest(
                         gift_id=gift_id,
                         offset='',
                         limit=10,
-                        sort_by_price=True
+                        sort_by_price=is_sort_price if is_sort_price else None
                     ))
                 )
 
@@ -292,8 +293,8 @@ class TelegramResaleScanner:
             except Exception as e:
                 logger.debug(f"Ошибка проверки ресейла для gift_id {gift_id}: {e}")
 
-            # Пауза между запросами к коллекциям для безопасности и нулевого кулдауна
-            await asyncio.sleep(1.2)
+            # Безопасная пауза 0.6 сек (при 4 сессиях это 2.4 сек на сессию)
+            await asyncio.sleep(0.6)
 
     def stop(self):
         self.is_running = False

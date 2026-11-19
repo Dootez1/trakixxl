@@ -116,7 +116,7 @@ def is_onchain_or_invalid_owner(
             if 'deleted account' in l_name or 'удаленный аккаунт' in l_name or 'удалённый аккаунт' in l_name:
                 return True
 
-    # 6. Проверка сырых данных события see.tg
+    # 6. Проверка словаря данных на наличие блокчейна
     if event_data and isinstance(event_data, dict):
         if event_data.get("onchain") or event_data.get("is_onchain"):
             return True

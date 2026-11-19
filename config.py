@@ -31,7 +31,5 @@ TELEGRAM_API_HASH = os.getenv("TELEGRAM_API_HASH", "b18441a1ff607e10a989891a5462
 TELEGRAM_SESSION_NAME = os.getenv("TELEGRAM_SESSION_NAME", "session_checker")
 TELEGRAM_SESSIONS = os.getenv("TELEGRAM_SESSIONS", "")
 
-# TON / Market API settings
-TONAPI_KEY = os.getenv("TONAPI_KEY", "")
-SEETG_TOKEN = os.getenv("SEETG_TOKEN", "")
+# Database settings
 DB_PATH = BASE_DIR / "treker.db"

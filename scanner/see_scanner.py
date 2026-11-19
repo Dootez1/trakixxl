@@ -228,15 +228,19 @@ class SeeScanner:
             if not target_username:
                 return
 
+            clean_target = target_username.strip().lstrip("@").lower()
+
             BLACKLISTED_HANDLES = {
                 "alexander", "terminator", "telegram", "market", "fragment",
                 "wallet", "username", "admin", "channel", "news", "support",
-                "gifts", "nft", "ton", "crypto", "official"
+                "gifts", "nft", "ton", "crypto", "official", "bot", "portals", "portal",
+                "unlimited", "gifthunter", "giftplayers", "gift_bot", "stars", "getgems",
+                "tonnel", "mrkt", "tonviewer"
             }
-            if target_username.lower() in BLACKLISTED_HANDLES:
+            if clean_target in BLACKLISTED_HANDLES or clean_target.endswith("bot") or is_onchain_or_invalid_owner(owner_name=clean_target):
                 return
 
-            logger.info(f"🔥 [ПОДТВЕРЖДЕН ПРОДАВЕЦ]: {full_name} -> @{target_username} (подарков: {user_gifts_count})")
+            logger.info(f"🔥 [ПОДТВЕРЖДЕН ПРОДАВЕЦ]: {full_name} -> @{clean_target} (подарков: {user_gifts_count})")
 
             # Защита от спама одним и тем же пользователем (кулдаун 10 минут)
             seller_key = target_username.lower()

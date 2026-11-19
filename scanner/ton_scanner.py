@@ -323,12 +323,12 @@ class TonScanner:
                         if not slug or slug in self.seen_slugs or await db.is_slug_seen(slug):
                             continue
 
-                        # Фильтр 1: Исключаем блокчейн TON
-                        if getattr(rg, 'owner_address', None):
-                            continue
-
-                        # Фильтр 2: Исключаем каналы и группы
-                        if isinstance(getattr(rg, 'owner_id', None), (PeerChannel, PeerChat)):
+                        # Фильтр 1: Исключаем блокчейн TON, кошельки и каналы
+                        if is_onchain_or_invalid_owner(
+                            owner_name=getattr(rg, 'owner_name', None),
+                            owner_address=getattr(rg, 'owner_address', None),
+                            owner_id=getattr(rg, 'owner_id', None)
+                        ):
                             continue
 
                         # Определение цены в GRAM
@@ -361,18 +361,18 @@ class TonScanner:
                             if (not re.match(r'^[a-zA-Z0-9_]{4,32}$', cand)
                                 or re.search(r'[а-яА-ЯёЁ]', cand)
                                 or cand_lower.endswith("bot")
-                                or cand_lower in NON_USERS):
+                                or cand_lower in NON_USERS
+                                or is_onchain_or_invalid_owner(owner_name=cand)):
                                 continue
 
                             # 1. 100% Верификация через веб-профиль t.me
                             if not await verify_real_telegram_user(cand):
                                 continue
 
-                            # 2. СТРОГАЯ ПРОВЕРКА ВИТРИНЫ:
-                            # Убеждаемся, что этот @username РЕАЛЬНО владеет этим подарком И у него <= 3 подарков!
-                            is_valid, cnt, _ = await verify_candidate_showcase(self.client, cand, slug, num_val)
-                            if not is_valid:
-                                logger.debug(f"Лот {slug} пропущен: у @{cand} нет этого подарка в витрине или подарков > 3")
+                            # 2. СТРОГАЯ ПРОВЕРКА ПРОФИЛЯ (<= 5 подарков, не кит):
+                            is_valid, cnt, _ = await verify_candidate_showcase(cand, slug, num_val, client=self.client)
+                            if not is_valid or cnt > 5:
+                                logger.debug(f"Лот {slug} пропущен: у @{cand} подарков {cnt} > 5")
                                 continue
 
                             target_username = cand
@@ -387,11 +387,12 @@ class TonScanner:
                             )
                             if deanonym_result:
                                 target_tg_id, target_username, method, cnt = deanonym_result
-                                clean_owner = target_username or f"id_{target_tg_id}"
+                                if not target_username or is_onchain_or_invalid_owner(owner_name=target_username) or cnt > 5:
+                                    continue
+                                clean_owner = target_username
                                 user_gifts_count = cnt
-                                logger.info(f"🔓 [ЛОТ ДЕ-АНОНИМИЗИРОВАН]: {title} #{num} -> {clean_owner} ({method}, подарков: {cnt})")
+                                logger.info(f"🔓 [ЛОТ ДЕ-АНОНИМИЗИРОВАН]: {title} #{num} -> @{clean_owner} ({method}, подарков: {cnt})")
                             else:
-                                # Анонимный лот не подтвержден на 100% — пропускаем
                                 continue
 
                         seller_key = (target_username or str(target_tg_id)).lower()

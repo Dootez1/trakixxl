@@ -132,7 +132,8 @@ class TonScanner:
                 if is_onchain_or_invalid_owner(
                     owner_name=getattr(gift_obj, 'owner_name', None),
                     owner_address=getattr(gift_obj, 'owner_address', None),
-                    owner_id=getattr(gift_obj, 'owner_id', None)
+                    owner_id=getattr(gift_obj, 'owner_id', None),
+                    gift_obj=gift_obj
                 ):
                     continue
 

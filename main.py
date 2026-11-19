@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import os
 import sys
 
 from aiogram import Bot, Dispatcher
@@ -41,6 +42,25 @@ async def main():
         print("ВНИМАНИЕ: Создайте файл .env на основе .env.example и укажите BOT_TOKEN!")
         print("!" * 60 + "\n")
         return
+
+    # 0. Запуск HTTP health check сервера для облачных сервисов (Render, Railway, Heroku)
+    port = os.getenv("PORT")
+    if port:
+        try:
+            from aiohttp import web
+            async def handle_health(request):
+                return web.Response(text="Treker is running", status=200)
+
+            health_app = web.Application()
+            health_app.router.add_get("/", handle_health)
+            health_app.router.add_get("/health", handle_health)
+            runner = web.AppRunner(health_app)
+            await runner.setup()
+            site = web.TCPSite(runner, "0.0.0.0", int(port))
+            await site.start()
+            logger.info(f"🌐 HTTP Health Check сервер запущен на 0.0.0.0:{port}")
+        except Exception as e_port:
+            logger.warning(f"Не удалось запустить health-check сервер на порту {port}: {e_port}")
 
     # 1. Инициализация базы данных
     await db.init()

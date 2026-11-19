@@ -155,14 +155,28 @@ class ProfileChecker:
                     result["gifts_count"] = 999
                     return result
 
-            from scanner.filters import is_onchain_or_invalid_owner
+            from scanner.filters import is_onchain_or_invalid_owner, is_wallet_string
+            if is_wallet_string(clean_user):
+                result["skip_reason"] = "Владелец является адресом кошелька TON"
+                result["is_rich"] = True
+                result["gifts_count"] = 999
+                return result
+
             if not isinstance(entity, User) or entity.bot or getattr(entity, 'deleted', False):
                 result["skip_reason"] = "Не личный профиль (канал, бот или удалённый аккаунт)"
                 result["is_rich"] = True
                 result["gifts_count"] = 999
                 return result
 
-            if entity.username and is_onchain_or_invalid_owner(owner_name=entity.username):
+            f_name = (getattr(entity, 'first_name', '') or '').lower()
+            l_name = (getattr(entity, 'last_name', '') or '').lower()
+            if any(w in f_name or w in l_name for w in ["deleted account", "удаленный аккаунт", "удалённый аккаунт"]):
+                result["skip_reason"] = "Удалённый аккаунт"
+                result["is_rich"] = True
+                result["gifts_count"] = 999
+                return result
+
+            if entity.username and (is_onchain_or_invalid_owner(owner_name=entity.username) or is_wallet_string(entity.username)):
                 result["skip_reason"] = "Владелец является адресом кошелька TON"
                 result["is_rich"] = True
                 result["gifts_count"] = 999

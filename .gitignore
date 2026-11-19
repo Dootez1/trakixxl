@@ -4,7 +4,6 @@
 !.env.example
 *.session
 *.session-journal
-sessions.txt
 sessions/
 
 # Databases

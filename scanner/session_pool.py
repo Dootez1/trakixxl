@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import re
 import time
 from pathlib import Path
 from typing import List, Optional, Callable, Any, Set
@@ -143,6 +144,42 @@ class SessionPool:
                             logger.error(f"Ошибка загрузки StringSession #{line_idx}: {se}")
             except Exception as e:
                 logger.error(f"Ошибка чтения sessions.txt: {e}")
+
+        # 5. Проверяем строковые сессии из переменной окружения TELEGRAM_SESSIONS (для облачного хостинга)
+        env_sessions = getattr(config, "TELEGRAM_SESSIONS", "")
+        if env_sessions:
+            raw_keys = [k.strip() for k in re.split(r'[,;\n\r]+', env_sessions) if k.strip()]
+            for env_idx, key in enumerate(raw_keys, 1):
+                if len(key) > 40:
+                    src_key = f"env:{key[:20]}"
+                    if src_key in self.loaded_sources:
+                        continue
+                    try:
+                        client = TelegramClient(
+                            StringSession(key),
+                            config.TELEGRAM_API_ID,
+                            config.TELEGRAM_API_HASH,
+                            device_model="PC 64bit",
+                            system_version="Windows 10",
+                            app_version="5.4.1 x64",
+                            flood_sleep_threshold=0
+                        )
+                        await client.connect()
+                        if await client.is_user_authorized():
+                            me = await client.get_me()
+                            username = f"@{me.username}" if me.username else me.first_name
+                            if me.id in self.loaded_user_ids:
+                                self.loaded_sources.add(src_key)
+                                await client.disconnect()
+                                continue
+                            logger.info(f"✅ [ENV StringSession #{env_idx} ПОДКЛЮЧЕНА]: {username} (ID: {me.id})")
+                            self.loaded_user_ids.add(me.id)
+                            self.clients.append(client)
+                            self.loaded_sources.add(src_key)
+                        else:
+                            await client.disconnect()
+                    except Exception as ee:
+                        logger.error(f"Ошибка загрузки ENV StringSession #{env_idx}: {ee}")
 
         self.is_initialized = len(self.clients) > 0
         self._last_refresh = time.time()

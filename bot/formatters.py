@@ -1,6 +1,7 @@
 import html
 from datetime import datetime, timezone, timedelta
 from typing import Dict, Any
+from scanner.filters import is_wallet_string
 
 MSK = timezone(timedelta(hours=3))
 
@@ -41,13 +42,13 @@ def format_lot_message(lot: Dict[str, Any], show_claim_info: bool = False, is_dm
     username = lot.get("owner_username")
     user_id = lot.get("owner_tg_id")
     owner_name = lot.get("owner_name")
-    if username and not str(username).lower().startswith("market") and not str(username).startswith("id_"):
+    if username and not str(username).lower().startswith("market") and not str(username).startswith("id_") and not is_wallet_string(username):
         clean_u = str(username).strip().lstrip("@")
         owner_display = f'<a href="https://t.me/{clean_u}">@{clean_u}</a>'
     elif user_id and int(user_id) > 0:
         disp_name = html.escape(str(owner_name or f"ID: {user_id}"))
         owner_display = f'<a href="tg://user?id={user_id}">{disp_name}</a>'
-    elif owner_name and str(owner_name).strip() and not str(owner_name).lower().startswith("market"):
+    elif owner_name and str(owner_name).strip() and not str(owner_name).lower().startswith("market") and not is_wallet_string(owner_name):
         owner_display = html.escape(str(owner_name).strip())
     else:
         owner_display = "Скрыт"

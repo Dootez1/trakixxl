@@ -1,5 +1,6 @@
 import re
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+from scanner.filters import is_wallet_string
 
 def get_lot_keyboard(lot_id: int, username: str = None, user_id: int = None, gift_link: str = None, owner_name: str = None) -> InlineKeyboardMarkup:
     """
@@ -30,7 +31,7 @@ def get_claimed_lot_dm_keyboard(username: str, lot_id: int = None, user_id: int 
     """
     clean_username = (username or "").strip().lstrip("@")
     buttons = []
-    if clean_username and not clean_username.lower().startswith("market") and not clean_username.startswith("id_"):
+    if clean_username and not clean_username.lower().startswith("market") and not clean_username.startswith("id_") and not is_wallet_string(clean_username):
         buttons.append([
             InlineKeyboardButton(text="Написать продавцу", url=f"https://t.me/{clean_username}")
         ])

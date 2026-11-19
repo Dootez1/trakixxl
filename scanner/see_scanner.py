@@ -15,7 +15,7 @@ from scanner.verifier import verify_real_telegram_user
 from scanner.filters import (
     determine_filters, FILTER_CHEAP, FILTER_MEDIUM,
     FILTER_EXPENSIVE, FILTER_GIRLS, FILTER_UPGRADED,
-    is_onchain_or_invalid_owner
+    is_onchain_or_invalid_owner, is_wallet_string
 )
 
 logger = logging.getLogger("SeeScanner")
@@ -130,10 +130,20 @@ class SeeScanner:
             target_username = None
             target_tg_id = None
             raw_owner_name = gift.get("owner_name") or details.get("owner_name") or ""
-            raw_owner_addr = gift.get("owner_address") or details.get("owner_address") or gift.get("address")
+            raw_owner_addr = (
+                gift.get("owner_address") or details.get("owner_address") or
+                gift.get("address") or details.get("address") or
+                gift.get("wallet") or details.get("wallet")
+            )
 
             # Строгий отсев блокчейна, кошельков TON и каналов
-            if is_onchain_or_invalid_owner(owner_name=raw_owner_name, owner_address=raw_owner_addr):
+            if (
+                is_onchain_or_invalid_owner(owner_name=raw_owner_name, owner_address=raw_owner_addr, event_data=gift) or
+                is_onchain_or_invalid_owner(event_data=details) or
+                is_onchain_or_invalid_owner(event_data=event_data) or
+                is_wallet_string(raw_owner_name) or
+                is_wallet_string(raw_owner_addr)
+            ):
                 logger.debug(f"🚫 [БЛОКЧЕЙН/КОШЕЛЕК ОТСЕЯН]: {full_slug} ({raw_owner_name or raw_owner_addr})")
                 await db.mark_slugs_seen([full_slug])
                 return
@@ -155,10 +165,16 @@ class SeeScanner:
                     if res and getattr(res, 'gift', None):
                         mtproto_gift = res.gift
                         # Строгая проверка владельца по MTProto
-                        if is_onchain_or_invalid_owner(
-                            owner_name=getattr(mtproto_gift, 'owner_name', None),
-                            owner_address=getattr(mtproto_gift, 'owner_address', None),
-                            owner_id=getattr(mtproto_gift, 'owner_id', None)
+                        if (
+                            is_onchain_or_invalid_owner(
+                                owner_name=getattr(mtproto_gift, 'owner_name', None),
+                                owner_address=getattr(mtproto_gift, 'owner_address', None),
+                                owner_id=getattr(mtproto_gift, 'owner_id', None),
+                                gift_obj=mtproto_gift
+                            )
+                            or is_wallet_string(getattr(mtproto_gift, 'owner_name', None))
+                            or getattr(mtproto_gift, 'gift_address', None)
+                            or getattr(mtproto_gift, 'owner_address', None)
                         ):
                             logger.info(f"🚫 [БЛОКЧЕЙН/КАНАЛ ОТСЕЯН]: {full_slug} ({getattr(mtproto_gift, 'owner_name', '')})")
                             await db.mark_slugs_seen([full_slug])
@@ -207,15 +223,17 @@ class SeeScanner:
             if not target_username:
                 to_user = event_data.get("to_user") or event_data.get("user") or {}
                 if isinstance(to_user, dict) and to_user.get("username"):
-                    target_username = to_user.get("username")
-                    target_tg_id = to_user.get("id")
+                    cand_u = str(to_user.get("username")).strip().lstrip("@")
+                    if not is_wallet_string(cand_u) and not is_onchain_or_invalid_owner(owner_name=cand_u, event_data=to_user):
+                        target_username = cand_u
+                        target_tg_id = to_user.get("id")
 
             # ВТОРОЙ ЭШЕЛОН ПРОВЕРКИ КИТОВ: ProfileChecker
             if target_username:
                 p_data = await profile_checker.check_user(target_username)
                 g_cnt = p_data.get("gifts_count", user_gifts_count)
-                if p_data.get("is_rich") or g_cnt > 5:
-                    logger.info(f"🚫 [КИТ ОТСЕЯН]: @{target_username} имеет {g_cnt} подарков (> 5) / {p_data.get('skip_reason')}!")
+                if p_data.get("is_rich") or g_cnt > 5 or g_cnt < 1:
+                    logger.info(f"🚫 [КИТ/ПУСТОЙ ПРОФИЛЬ ОТСЕЯН]: @{target_username} имеет {g_cnt} подарков / {p_data.get('skip_reason')}!")
                     await db.mark_slugs_seen([full_slug])
                     return
                 prem_level = p_data.get("premium_level", 0)
@@ -286,7 +304,7 @@ class SeeScanner:
                 "premium_level": prem_level,
                 "owner_username": target_username,
                 "owner_tg_id": target_tg_id,
-                "owner_name": raw_owner_name,
+                "owner_name": "Скрыт" if is_wallet_string(raw_owner_name) else raw_owner_name,
                 "price": price_gram,
                 "stars_price": stars_price,
                 "currency": "GRAM",

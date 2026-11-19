@@ -31,6 +31,10 @@ COMMON_FIRST_NAMES = {
     "admin", "owner", "user", "channel"
 }
 
+import time
+
+_showcase_cache: Dict[str, Tuple[float, int]] = {}
+
 async def verify_candidate_showcase(
     peer_id: Any,
     target_slug: str,
@@ -39,13 +43,22 @@ async def verify_candidate_showcase(
 ) -> Tuple[bool, int, Optional[str]]:
     """
     Строгая верификация кандидата:
-    1. Запрашивает витрину пользователя со всеми подарками (exclude_unsaved=False).
-    2. Проверяет общее количество подарков: СТРОГО НЕ БОЛЕЕ 5 (исключаем китов).
-    3. Если > 5 подарков — СТРОГИЙ СТОП!
-    4. Проверяет реальное наличие лота у кандидата.
+    1. Проверяет локальный кэш китов (мгновенно отсекает известных дилеров).
+    2. Запрашивает витрину пользователя со всеми подарками (exclude_unsaved=False).
+    3. Проверяет общее количество подарков: СТРОГО НЕ БОЛЕЕ 5 (исключаем китов).
+    4. Если > 5 подарков — СТРОГИЙ СТОП!
+    5. Проверяет реальное наличие лота у кандидата.
     """
     if not peer_id:
         return False, 999, None
+
+    clean_key = str(peer_id).strip().lstrip("@").lower()
+    now = time.time()
+    if clean_key in _showcase_cache:
+        ts, cached_count = _showcase_cache[clean_key]
+        if now - ts < 43200:  # 12 часов кэш китов
+            if cached_count > 5:
+                return False, cached_count, None
 
     async def _fetch_gifts(c: TelegramClient):
         return await c(GetSavedStarGiftsRequest(
@@ -70,6 +83,7 @@ async def verify_candidate_showcase(
             return False, 999, None
 
         count = getattr(res, 'count', 0)
+        _showcase_cache[clean_key] = (now, count)
 
         # Строгий фильтр: максимум 5 подарков на аккаунте
         if count > 5:

@@ -217,16 +217,6 @@ class SeeScanner:
             self.recent_sellers[seller_key] = time.time()
 
             # 5. Определение топика
-            filters = determine_filters(
-                price=price_gram,
-                is_upgraded=True,
-                is_crafted=is_crafted,
-                is_female=is_fem,
-                gift_id=None,
-                is_on_chain=(market != "telegram"),
-                is_channel=False
-            )
-
             target_topic = None
             if is_crafted:
                 target_topic = FILTER_UPGRADED
@@ -239,7 +229,7 @@ class SeeScanner:
             elif 20.01 <= price_gram <= 100.0:
                 target_topic = FILTER_EXPENSIVE
 
-            if not target_topic or target_topic not in filters:
+            if not target_topic:
                 return
 
             # 6. Формирование лота

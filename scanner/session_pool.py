@@ -22,10 +22,17 @@ class SessionPool:
     def __init__(self):
         self.clients: List[TelegramClient] = []
         self.loaded_sources: Set[str] = set()
+        self.loaded_user_ids: Set[int] = set()
+        self.client_locks: dict[Any, asyncio.Lock] = {}
         self.cooldowns: dict[int, float] = {}  # index -> timestamp
         self._current_index = 0
         self.is_initialized = False
         self._last_refresh = 0
+
+    def get_lock(self, client: TelegramClient) -> asyncio.Lock:
+        if client not in self.client_locks:
+            self.client_locks[client] = asyncio.Lock()
+        return self.client_locks[client]
 
     async def init(self) -> int:
         """Первичная инициализация пула."""
@@ -75,7 +82,14 @@ class SessionPool:
                     me = await client.get_me()
                     if me:
                         username = f"@{me.username}" if getattr(me, 'username', None) else (me.first_name or "User")
+                        if me.id in self.loaded_user_ids:
+                            logger.info(f"ℹ️ [ДУБЛИКАТ ПРОПУЩЕН]: {path.name} -> {username} (ID: {me.id}) уже подключен")
+                            self.loaded_sources.add(src_key)
+                            await client.disconnect()
+                            continue
+
                         logger.info(f"✅ [НОВАЯ СЕССИЯ ПОДКЛЮЧЕНА]: {path.name} -> {username} (ID: {me.id})")
+                        self.loaded_user_ids.add(me.id)
                         self.clients.append(client)
                         self.loaded_sources.add(src_key)
                     else:
@@ -113,7 +127,14 @@ class SessionPool:
                             if await client.is_user_authorized():
                                 me = await client.get_me()
                                 username = f"@{me.username}" if me.username else me.first_name
+                                if me.id in self.loaded_user_ids:
+                                    logger.info(f"ℹ️ [ДУБЛИКАТ StringSession ПРОПУЩЕН]: {username} (ID: {me.id}) уже подключен")
+                                    self.loaded_sources.add(src_key)
+                                    await client.disconnect()
+                                    continue
+
                                 logger.info(f"✅ [НОВАЯ StringSession #{line_idx} ПОДКЛЮЧЕНА]: {username} (ID: {me.id})")
+                                self.loaded_user_ids.add(me.id)
                                 self.clients.append(client)
                                 self.loaded_sources.add(src_key)
                             else:
@@ -189,7 +210,9 @@ class SessionPool:
             try:
                 if not client.is_connected():
                     await client.connect()
-                return await operation(client)
+                lock = self.get_lock(client)
+                async with lock:
+                    return await operation(client)
             except FloodWaitError as fwe:
                 self.report_floodwait(client, fwe.seconds)
                 failed_clients.add(client)
@@ -198,6 +221,9 @@ class SessionPool:
                 if "flood" in err_str:
                     self.report_floodwait(client, 30)
                     failed_clients.add(client)
+                elif "decrease" in err_str:
+                    await asyncio.sleep(0.3)
+                    continue
                 else:
                     raise e
         return None
@@ -212,6 +238,8 @@ class SessionPool:
                 pass
         self.clients = []
         self.loaded_sources.clear()
+        self.loaded_user_ids.clear()
+        self.client_locks.clear()
         self.is_initialized = False
 
 session_pool = SessionPool()

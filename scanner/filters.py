@@ -1,6 +1,49 @@
-from typing import Optional, List
+import re
+from typing import Optional, List, Any
 import config
 from scanner.gift_catalog_ids import CHEAP_GIFT_IDS, MEDIUM_GIFT_IDS, EXPENSIVE_GIFT_IDS, GIRL_GIFT_IDS
+
+def is_onchain_or_invalid_owner(
+    owner_name: Optional[str] = None,
+    owner_address: Optional[str] = None,
+    owner_id: Any = None,
+    user_entity: Any = None
+) -> bool:
+    """
+    Строго отсекает:
+    1. Подарки в блокчейне TON (кошельки UQ..., EQ..., 0:...).
+    2. Подарки каналов и групп (PeerChannel, PeerChat, Channel, Chat).
+    3. Удалённые аккаунты (Deleted Accounts).
+    4. Агрегаторы/боты/маркетплейсы.
+    """
+    if owner_address and str(owner_address).strip():
+        return True
+
+    if owner_name:
+        clean = str(owner_name).strip()
+        if (clean.startswith(("UQ", "EQ", "0:", "-1:")) and len(clean) >= 28) or len(clean) >= 44:
+            return True
+        if re.search(r'[_\-][a-zA-Z0-9_\-]{20,}', clean):
+            return True
+
+    if owner_id:
+        from telethon.tl.types import PeerChannel, PeerChat
+        if isinstance(owner_id, (PeerChannel, PeerChat)):
+            return True
+        if hasattr(owner_id, "channel_id") or hasattr(owner_id, "chat_id"):
+            return True
+
+    if user_entity:
+        from telethon.tl.types import User, Channel, Chat
+        if isinstance(user_entity, (Channel, Chat)):
+            return True
+        if isinstance(user_entity, User):
+            if getattr(user_entity, 'bot', False):
+                return True
+            if getattr(user_entity, 'deleted', False):
+                return True
+
+    return False
 
 FILTER_CHEAP = "cheap"
 FILTER_MEDIUM = "medium"

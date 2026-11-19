@@ -13,6 +13,7 @@ from telethon.tl.functions.contacts import ResolveUsernameRequest
 from database.db import db
 from scanner.verifier import verify_real_telegram_user
 from scanner.session_pool import session_pool
+from scanner.filters import is_onchain_or_invalid_owner
 
 logger = logging.getLogger("Deanonymizer")
 
@@ -132,6 +133,14 @@ async def deanonymize_lot(
     num = getattr(gift_obj, 'num', None)
     raw_owner = getattr(gift_obj, 'owner_name', '') or ''
     clean_name = raw_owner.strip().lstrip("@")
+
+    # СТРОГИЙ СТОП: Блокчейн TON, кошельки и каналы исключаются полностью
+    if is_onchain_or_invalid_owner(
+        owner_name=raw_owner,
+        owner_address=getattr(gift_obj, 'owner_address', None),
+        owner_id=getattr(gift_obj, 'owner_id', None)
+    ):
+        return None
 
     # ==============================================================
     # ШАГ 1 (ГЛАВНЫЙ): Проверка реального @username продавца

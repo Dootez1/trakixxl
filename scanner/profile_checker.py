@@ -155,8 +155,17 @@ class ProfileChecker:
                     result["gifts_count"] = 999
                     return result
 
-            if not isinstance(entity, User):
-                result["skip_reason"] = "Не личный профиль (канал или бот)"
+            from scanner.filters import is_onchain_or_invalid_owner
+            if not isinstance(entity, User) or entity.bot or getattr(entity, 'deleted', False):
+                result["skip_reason"] = "Не личный профиль (канал, бот или удалённый аккаунт)"
+                result["is_rich"] = True
+                result["gifts_count"] = 999
+                return result
+
+            if entity.username and is_onchain_or_invalid_owner(owner_name=entity.username):
+                result["skip_reason"] = "Владелец является адресом кошелька TON"
+                result["is_rich"] = True
+                result["gifts_count"] = 999
                 return result
 
             result["tg_id"] = entity.id

@@ -18,7 +18,8 @@ from database.db import db
 from scanner.session_pool import session_pool
 from scanner.filters import (
     determine_filters, FILTER_CHEAP, FILTER_MEDIUM,
-    FILTER_EXPENSIVE, FILTER_GIRLS, FILTER_UPGRADED
+    FILTER_EXPENSIVE, FILTER_GIRLS, FILTER_UPGRADED,
+    is_onchain_or_invalid_owner
 )
 from scanner.profile_checker import profile_checker, detect_is_female
 from scanner.verifier import verify_real_telegram_user
@@ -126,6 +127,13 @@ class TonScanner:
 
                 slug = getattr(gift_obj, 'slug', None)
                 if not slug or slug in self.seen_slugs or await db.is_slug_seen(slug):
+                    continue
+
+                if is_onchain_or_invalid_owner(
+                    owner_name=getattr(gift_obj, 'owner_name', None),
+                    owner_address=getattr(gift_obj, 'owner_address', None),
+                    owner_id=getattr(gift_obj, 'owner_id', None)
+                ):
                     continue
 
                 if getattr(gift_obj, 'owner_address', None):

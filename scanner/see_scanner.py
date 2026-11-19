@@ -14,7 +14,8 @@ from scanner.deanonymizer import deanonymize_lot
 from scanner.verifier import verify_real_telegram_user
 from scanner.filters import (
     determine_filters, FILTER_CHEAP, FILTER_MEDIUM,
-    FILTER_EXPENSIVE, FILTER_GIRLS, FILTER_UPGRADED
+    FILTER_EXPENSIVE, FILTER_GIRLS, FILTER_UPGRADED,
+    is_onchain_or_invalid_owner
 )
 
 logger = logging.getLogger("SeeScanner")
@@ -128,7 +129,15 @@ class SeeScanner:
             # 4. Извлечение реального владельца / продавца
             target_username = None
             target_tg_id = None
-            raw_owner_name = gift.get("owner_name") or ""
+            raw_owner_name = gift.get("owner_name") or details.get("owner_name") or ""
+            raw_owner_addr = gift.get("owner_address") or details.get("owner_address") or gift.get("address")
+
+            # Строгий отсев блокчейна, кошельков TON и каналов
+            if is_onchain_or_invalid_owner(owner_name=raw_owner_name, owner_address=raw_owner_addr):
+                logger.debug(f"🚫 [БЛОКЧЕЙН/КОШЕЛЕК ОТСЕЯН]: {full_slug} ({raw_owner_name or raw_owner_addr})")
+                await db.mark_slugs_seen([full_slug])
+                return
+
             user_gifts_count = 1
             is_fem = False
             can_write_free = 1
@@ -145,6 +154,16 @@ class SeeScanner:
                     )
                     if res and getattr(res, 'gift', None):
                         mtproto_gift = res.gift
+                        # Строгая проверка владельца по MTProto
+                        if is_onchain_or_invalid_owner(
+                            owner_name=getattr(mtproto_gift, 'owner_name', None),
+                            owner_address=getattr(mtproto_gift, 'owner_address', None),
+                            owner_id=getattr(mtproto_gift, 'owner_id', None)
+                        ):
+                            logger.info(f"🚫 [БЛОКЧЕЙН/КАНАЛ ОТСЕЯН]: {full_slug} ({getattr(mtproto_gift, 'owner_name', '')})")
+                            await db.mark_slugs_seen([full_slug])
+                            return
+
                         if getattr(mtproto_gift, 'owner_name', None):
                             raw_owner_name = mtproto_gift.owner_name
                         for attr in getattr(mtproto_gift, 'attributes', []):

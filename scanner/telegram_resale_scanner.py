@@ -169,16 +169,7 @@ class TelegramResaleScanner:
         except Exception as de:
             logger.debug(f"MTProto деанонимизация {slug}: {de}")
 
-        if not target_username and raw_owner_name:
-            clean_raw = raw_owner_name.strip().lstrip("@")
-            if (
-                clean_raw
-                and not is_wallet_string(clean_raw)
-                and clean_raw.lower() not in BLACKLISTED_HANDLES
-                and not clean_raw.lower().endswith("bot")
-            ):
-                target_username = clean_raw
-
+        # Если подтверждённый продавец с @username не найден — лот не публикуется
         if not target_username:
             self.seen_slugs.add(slug)
             return
@@ -188,17 +179,11 @@ class TelegramResaleScanner:
             self.seen_slugs.add(slug)
             return
 
-        # 5. ПРОВЕРКА ПРОФИЛЯ (СТРОГО 1 - 5 ПОДАРКОВ)
-        p_data = await profile_checker.check_user(clean_target)
-        g_cnt = p_data.get("gifts_count", user_gifts_count)
-        if p_data.get("is_rich") or g_cnt > 5 or g_cnt < 1:
-            self.seen_slugs.add(slug)
-            await db.mark_slugs_seen([slug])
-            return
-
-        prem_level = p_data.get("premium_level", 0)
-        can_write_free = 1 if p_data.get("can_write_free", True) else 0
-        is_fem = p_data.get("is_female", False)
+        # 5. Продавец уже 100% подтверждён (1 <= user_gifts_count <= 5)
+        from scanner.profile_checker import detect_is_female
+        is_fem = detect_is_female(raw_owner_name, "", clean_target, "")
+        can_write_free = 1
+        prem_level = 0
 
         # Защита от спама одним и тем же пользователем (кулдаун 10 минут)
         seller_key = clean_target.lower()
@@ -243,7 +228,7 @@ class TelegramResaleScanner:
             "is_upgraded": 1,
             "is_crafted": 1 if is_crafted else 0,
             "can_write_free": can_write_free,
-            "gifts_count": g_cnt,
+            "gifts_count": user_gifts_count,
             "owner_gender": "female" if is_fem else "male",
             "filter_type": target_topic
         }

@@ -160,21 +160,15 @@ async def deanonymize_lot(
 
     # ==============================================================
     # ШАГ 1 (ГЛАВНЫЙ): Проверка реального @username продавца
-    # Строго: обычные имена (Alexander, Terminator и т.д.) НЕ считаются юзернеймами!
-    # Поддерживаются реальные никнеймы новичков (haerz, ilya_yes, Rebzul, Nebesnik и т.д.)
+    # Строго: юзернейм ОБЯЗАН содержать символ '@' (например, @sashka_nft или "Иван @ivannft")!
+    # Произвольные имена (Drake, Ksenia, Polina и т.д.) НЕ являются юзернеймами и не опрашиваются!
     # ==============================================================
     possible_handles = []
-    # 1. Поиск @username в тексте (например, @sashka_nft или в био)
+    # 1. Поиск @username в тексте (например, @sashka_nft или kween @kweenrl)
     for match in re.findall(r'@([a-zA-Z0-9_]{4,32})', raw_owner):
         clean_m = match.lower().strip()
-        if clean_m not in BLACKLISTED_HANDLES and not clean_m.endswith("bot"):
+        if clean_m not in BLACKLISTED_HANDLES and not clean_m.endswith("bot") and not is_wallet_string(clean_m):
             possible_handles.append(clean_m)
-
-    # 2. Если поле owner_name является уникальным ником (не словарным именем)
-    clean_raw = raw_owner.strip().lstrip("@").lower()
-    if clean_raw and re.match(r'^[a-zA-Z0-9_]{4,32}$', clean_raw):
-        if clean_raw not in BLACKLISTED_HANDLES and clean_raw not in COMMON_FIRST_NAMES and not clean_raw.endswith("bot"):
-            possible_handles.append(clean_raw)
 
     possible_handles = list(set(possible_handles))
 

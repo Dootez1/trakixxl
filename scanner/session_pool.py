@@ -261,8 +261,11 @@ class SessionPool:
                 elif "decrease" in err_str:
                     await asyncio.sleep(0.3)
                     continue
+                elif "internal issues" in err_str or "rpcmcgetfailerror" in err_str:
+                    failed_clients.add(client)
                 else:
-                    raise e
+                    logger.debug(f"Ошибка MTProto запроса: {e}")
+                    failed_clients.add(client)
         return None
 
     async def close(self):
